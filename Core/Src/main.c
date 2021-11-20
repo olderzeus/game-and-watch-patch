@@ -100,7 +100,7 @@ gamepad_t read_buttons() {
 #if CLOCK_ONLY
     if(gamepad & GAMEPAD_GAME){
 #else
-    if((gamepad & GAMEPAD_LEFT) && (gamepad & GAMEPAD_GAME)){
+    if((gamepad & (GAMEPAD_LEFT | GAMEPAD_UP | GAMEPAD_DOWN | GAMEPAD_RIGHT)) && (gamepad & GAMEPAD_GAME)){
 #endif
         start_bank_2();
     }
