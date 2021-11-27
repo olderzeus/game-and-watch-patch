@@ -24,7 +24,12 @@ build_dir = Path("build")  # TODO: expose this properly or put in better locatio
 class MarioGnW(Device, name="mario"):
     class Int(IntFirmware):
         STOCK_ROM_SHA1_HASH = "efa04c387ad7b40549e15799b471a6e1cd234c76"
-        STOCK_ROM_END = 0x18100  # Used for generating linker script.
+
+        # Note: this isn't the ACTUAL Stock ROM end, this is actually
+        # pointing to where some rwdata is, but this data will be relocated
+        # and compressed. This variable is used in the linker scripts as to
+        # where to start putting novel code.
+        STOCK_ROM_END = 0x18100
         KEY_OFFSET = 0x106F4
         NONCE_OFFSET = 0x106E4
         RWDATA_OFFSET = 0x180A4
@@ -679,7 +684,9 @@ class MarioGnW(Device, name="mario"):
             )
 
         # Compress, insert, and reference the modified rwdata
-        self.int_pos += self.internal.rwdata.write_table_and_data(self.int_pos)
+        self.int_pos += self.internal.rwdata.write_table_and_data(
+            0x17DB4, data_offset=self.int_pos
+        )
 
         # Shorten the external firmware
         # This rounds the negative self.ext_offset towards zero.

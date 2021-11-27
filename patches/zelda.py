@@ -55,7 +55,7 @@ from pathlib import Path
 from .exception import InvalidStockRomError
 from .firmware import Device, ExtFirmware, Firmware, IntFirmware
 from .tileset import decode_backdrop
-from .utils import fds_remove_crc_gaps, printi
+from .utils import fds_remove_crc_gaps, printd, printi
 
 build_dir = Path("build")  # TODO: expose this properly or put in better location
 
@@ -63,10 +63,10 @@ build_dir = Path("build")  # TODO: expose this properly or put in better locatio
 class ZeldaGnW(Device, name="zelda"):
     class Int(IntFirmware):
         STOCK_ROM_SHA1_HASH = "ac14bcea6e4ff68c88fd2302c021025a2fb47940"
-        STOCK_ROM_END = 0x1B6E0  # Used for generating linker script.
+        STOCK_ROM_END = 0x1B3E0  # Used for generating linker script.
         KEY_OFFSET = 0x165A4
         NONCE_OFFSET = 0x16590
-        # RWDATA_OFFSET = 0x1B390
+        RWDATA_OFFSET = 0x1B390
         RWDATA_LEN = 20
         RWDATA_DTCM_IDX = 0  # decompresses to 0x2000_A800
 
@@ -85,6 +85,18 @@ class ZeldaGnW(Device, name="zelda"):
         FLASH_LEN = 0  # 0x24100000 - FLASH_BASE
 
     def argparse(self, parser):
+        group = parser.add_argument_group("Low level flash savings flags")
+        group.add_argument(
+            "--no-la",
+            action="store_true",
+            help="Remove Link's Awakening rom (all languages).",
+        )
+        group.add_argument(
+            "--no-sleep-images",
+            action="store_true",
+            help="Remove the 5 sleeping images.",
+        )
+
         self.args = parser.parse_args()
         return self.args
 
@@ -259,6 +271,10 @@ class ZeldaGnW(Device, name="zelda"):
         self.external.set_range(0x3E_8000, 0x3F_0000, b"\xFF")
 
     def patch(self):
+        b_w_memcpy_inflate_asm = "b.w #" + hex(
+            0xFFFFFFFE & self.internal.address("memcpy_inflate")
+        )
+
         self._dump_roms()
         self._dump_backdrops()
 
@@ -290,6 +306,41 @@ class ZeldaGnW(Device, name="zelda"):
             self.internal.nop(0x16536, 2)
             self.internal.nop(0x1653A, 1)
             self.internal.nop(0x1653C, 1)
+
+        if False:
+            # This doesn't quite work yet
+            # I think RWData stuff probably needs to be updated
+            printd("Compressing and moving LoZ2 JP ROM data to int")
+            compressed_len = self.external.compress(0xB_0000, 0x1E000)
+            self.internal.asm(0xF702, b_w_memcpy_inflate_asm)
+            self.move_to_int(0xB_0000, compressed_len, 0xFD1C)
+
+        printd("Compressing and moving LoZ2 TIMER data to int")
+        compressed_len = self.external.compress(0xD_0000, 0x2000)
+        self.internal.asm(0xF430, b_w_memcpy_inflate_asm)
+        self.move_to_int(0xD_0000, compressed_len, 0xFCF8)
+
+        if self.args.no_la:
+            printi("Removing Link's Awakening (All Languages)")
+            self.external.clear_range(0xD2000, 0x1F4C00)
+            # TODO: disable LA in the gnw menu.
+            # TODO: make this work with moving stuff around, currently just
+            # removing to free up an island of space.
+
+        if self.args.no_sleep_images:
+            self.external.clear_range(0x1F4C00, 0x288120)
+
+            # setting this to NULL doesn't just display a black image, I
+            # don't think the drawing code has a NULL check.
+            # self.rwdata_erase(0x1f4c00, 0x288120 - 0x1f4c00)
+
+            # TODO: make this work with moving stuff around, currently just
+            # removing to free up an island of space.
+
+        # Compress, insert, and reference the modified rwdata
+        self.int_pos += self.internal.rwdata.write_table_and_data(
+            0x1B070, data_offset=self.int_pos
+        )
 
         internal_remaining_free = len(self.internal) - self.int_pos
         compressed_memory_free = (
